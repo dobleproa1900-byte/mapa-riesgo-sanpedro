@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0f14">
+  <meta name="description" content="Mapa de riesgo hídrico interactivo de San Pedro, Buenos Aires.">
+  <title>Mapa de Riesgo Hídrico — San Pedro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <style>
+    :root {
+      --bg: #0a0f14;
+      --panel: rgba(12, 18, 26, 0.92);
+      --border: rgba(94, 234, 212, 0.18);
+      --ink: #e8eef4;
+      --muted: #8b9aab;
+      --accent: #5eead4;
+      --alto: #ef4444;
+      --medio: #eab308;
+      --bajo: #22c55e;
+      --safe-t: env(safe-area-inset-top, 0px);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    html, body {
+      height: 100%;
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      min-height: 100dvh;
+    }
+
+    .topbar {
+      position: relative;
+      z-index: 1000;
+      flex-shrink: 0;
+      padding: calc(14px + var(--safe-t)) 16px 14px;
+      background: linear-gradient(180deg, #0f1720 0%, #0a0f14 100%);
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 12px 40px -20px rgba(0, 0, 0, 0.8);
+    }
+
+    .topbar-inner {
+      max-width: 960px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    h1 {
+      font-family: "Outfit", "DM Sans", sans-serif;
+      font-size: clamp(1.15rem, 4.5vw, 1.45rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    #map {
+      flex: 1;
+      width: 100%;
+      min-height: 280px;
+      background: #0a0f14;
+    }
+
+    /* Leaflet dark chrome */
+    .leaflet-container {
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: #0a0f14;
+    }
+
+    .leaflet-control-attribution {
+      background: rgba(10, 15, 20, 0.85) !important;
+      color: var(--muted) !important;
+      font-size: 10px !important;
+      border-radius: 8px 0 0 0 !important;
+      max-width: 70vw;
+    }
+
+    .leaflet-control-attribution a { color: var(--accent) !important; }
+
+    .leaflet-control-zoom {
+      border: 1px solid var(--border) !important;
+      border-radius: 12px !important;
+      overflow: hidden;
+      box-shadow: 0 10px 28px -12px rgba(0, 0, 0, 0.7) !important;
+    }
+
+    .leaflet-control-zoom a {
+      background: var(--panel) !important;
+      color: var(--ink) !important;
+      border-bottom-color: var(--border) !important;
+      width: 36px !important;
+      height: 36px !important;
+      line-height: 36px !important;
+      font-size: 16px !important;
+    }
+
+    .leaflet-control-zoom a:hover {
+      background: #15202b !important;
+      color: var(--accent) !important;
+    }
+
+    .legend {
+      position: absolute;
+      z-index: 900;
+      left: 12px;
+      bottom: calc(14px + var(--safe-b));
+      width: min(260px, calc(100vw - 72px));
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px 14px 12px;
+      box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.75);
+    }
+
+    .legend h2 {
+      font-family: "Outfit", sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .legend-item:first-of-type { border-top: none; padding-top: 0; }
+
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      flex-shrink: 0;
+      margin-top: 2px;
+      border: 1px solid rgba(0, 0, 0, 0.35);
+    }
+
+    .swatch.alto { background: var(--alto); box-shadow: 0 0 10px rgba(239, 68, 68, 0.45); }
+    .swatch.medio { background: var(--medio); box-shadow: 0 0 10px rgba(234, 179, 8, 0.35); }
+    .swatch.bajo { background: var(--bajo); box-shadow: 0 0 10px rgba(34, 197, 94, 0.35); }
+
+    .legend-text strong {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: 2px;
+    }
+
+    .legend-text span {
+      font-size: 11.5px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .leaflet-popup-content-wrapper {
+      background: #121a24;
+      color: var(--ink);
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      box-shadow: 0 16px 36px -14px rgba(0, 0, 0, 0.7);
+    }
+
+    .leaflet-popup-tip { background: #121a24; }
+    .leaflet-popup-content { margin: 12px 14px; font-size: 13px; line-height: 1.4; }
+    .leaflet-popup-content strong { color: var(--accent); }
+    .leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
+
+    @media (min-width: 640px) {
+      .topbar-inner { flex-direction: row; align-items: baseline; justify-content: space-between; gap: 16px; }
+      .subtitle { text-align: right; max-width: 280px; }
+      .legend { left: 18px; bottom: calc(18px + var(--safe-b)); }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <div class="eyebrow">San Pedro · Buenos Aires</div>
+        <h1>Mapa de Riesgo Hídrico — San Pedro</h1>
+      </div>
+      <p class="subtitle">Zonas estimadas por cercanía al Paraná, relieve y red cloacal</p>
+    </div>
+  </header>
+
+  <div id="map" role="application" aria-label="Mapa de riesgo hídrico de San Pedro"></div>
+
+  <aside class="legend" aria-label="Leyenda de niveles de riesgo">
+    <h2>Leyenda</h2>
+    <div class="legend-item">
+      <span class="swatch alto" aria-hidden="true"></span>
+      <div class="legend-text">
+        <strong>Riesgo alto</strong>
+        <span>Ribera del Paraná y zonas bajas inundables</span>
+      </div>
+    </div>
+    <div class="legend-item">
+      <span class="swatch medio" aria-hidden="true"></span>
+      <div class="legend-text">
+        <strong>Riesgo medio</strong>
+        <span>Centro urbano con cloacas antiguas</span>
+      </div>
+    </div>
+    <div class="legend-item">
+      <span class="swatch bajo" aria-hidden="true"></span>
+      <div class="legend-text">
+        <strong>Riesgo bajo</strong>
+        <span>Barrios altos / mayor cota</span>
+      </div>
+    </div>
+  </aside>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+    const CENTRO = [-33.679, -59.672];
+
+    const map = L.map("map", {
+      zoomControl: false,
+      attributionControl: true,
+    }).setView(CENTRO, 13);
+
+    L.control.zoom({ position: "topright" }).addTo(map);
+
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+      subdomains: "abcd",
+      maxZoom: 19,
+    }).addTo(map);
+
+    // Polígonos orientativos (no oficiales) — San Pedro BA
+    const zonaAlto = [
+      [-33.6620, -59.6550],
+      [-33.6655, -59.6485],
+      [-33.6720, -59.6460],
+      [-33.6795, -59.6475],
+      [-33.6850, -59.6520],
+      [-33.6885, -59.6605],
+      [-33.6860, -59.6670],
+      [-33.6780, -59.6655],
+      [-33.6705, -59.6620],
+      [-33.6645, -59.6585],
+    ];
+
+    const zonaMedio = [
+      [-33.6725, -59.6785],
+      [-33.6740, -59.6700],
+      [-33.6770, -59.6655],
+      [-33.6825, -59.6640],
+      [-33.6870, -59.6685],
+      [-33.6885, -59.6760],
+      [-33.6855, -59.6825],
+      [-33.6795, -59.6850],
+      [-33.6745, -59.6830],
+    ];
+
+    const zonaBajo = [
+      [-33.6780, -59.6980],
+      [-33.6805, -59.6885],
+      [-33.6865, -59.6860],
+      [-33.6930, -59.6895],
+      [-33.6965, -59.6985],
+      [-33.6940, -59.7080],
+      [-33.6865, -59.7105],
+      [-33.6800, -59.7060],
+    ];
+
+    const estilo = (fill) => ({
+      color: fill,
+      weight: 2,
+      opacity: 0.95,
+      fillColor: fill,
+      fillOpacity: 0.32,
+    });
+
+    function popupHtml(nivel, detalle) {
+      return `<strong>${nivel}</strong><br>${detalle}`;
+    }
+
+    L.polygon(zonaAlto, estilo("#ef4444"))
+      .bindPopup(popupHtml("Riesgo alto", "Ribera del Paraná y zonas bajas. Prioridad ante crecidas."))
+      .addTo(map);
+
+    L.polygon(zonaMedio, estilo("#eab308"))
+      .bindPopup(popupHtml("Riesgo medio", "Centro urbano. Vulnerable por cloacas antiguas y anegamientos."))
+      .addTo(map);
+
+    L.polygon(zonaBajo, estilo("#22c55e"))
+      .bindPopup(popupHtml("Riesgo bajo", "Barrios de mayor cota. Menor exposición hídrica relativa."))
+      .addTo(map);
+
+    L.circleMarker(CENTRO, {
+      radius: 6,
+      color: "#5eead4",
+      weight: 2,
+      fillColor: "#5eead4",
+      fillOpacity: 0.85,
+    })
+      .bindPopup("<strong>Centro de San Pedro</strong><br>Referencia del mapa")
+      .addTo(map);
+
+    // Ajuste móvil: invalidar tamaño al cargar / rotar
+    function refreshMap() {
+      setTimeout(() => map.invalidateSize(), 100);
+    }
+    window.addEventListener("load", refreshMap);
+    window.addEventListener("resize", refreshMap);
+    window.addEventListener("orientationchange", refreshMap);
+  </script>
+</body>
+</html>
