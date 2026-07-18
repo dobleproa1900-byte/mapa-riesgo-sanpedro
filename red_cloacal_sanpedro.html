@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Red Cloacal San Pedro — Simulación</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #0b0f1a; color: #e2e8f0; }
+.header { background: linear-gradient(135deg, #1e3a8a, #1e40af); padding: 16px 24px; text-align: center; }
+.header h1 { font-size: 20px; font-weight: 800; }
+.header p { font-size: 12px; opacity: 0.8; margin-top: 4px; }
+.main { display: flex; gap: 0; height: calc(100vh - 80px); }
+.controls { width: 280px; background: #12121a; border-right: 1px solid #1e2d4a; padding: 16px; overflow-y: auto; flex-shrink: 0; }
+.canvas-area { flex: 1; position: relative; overflow: hidden; }
+canvas { width: 100%; height: 100%; }
+.control-group { margin-bottom: 16px; }
+.control-group label { font-size: 12px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 6px; }
+input[type=range] { width: 100%; accent-color: #3b82f6; }
+.val { float: right; color: #60a5fa; font-weight: 700; }
+.badge { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; margin-top: 8px; }
+.ok { background: #064e3b; color: #6ee7b7; }
+.warn { background: #78350f; color: #fcd34d; }
+.crit { background: #7f1d1d; color: #fca5a5; }
+.metric { background: #1e2d4a; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+.metric-val { font-size: 22px; font-weight: 900; color: #60a5fa; }
+.metric-label { font-size: 10px; color: #64748b; text-transform: uppercase; }
+.legend { margin-top: 16px; }
+.legend-item { display: flex; align-items: center; gap: 8px; font-size: 11px; margin-bottom: 6px; }
+.legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.btn { width: 100%; padding: 10px; border: none; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; margin-top: 8px; }
+.btn-sim { background: linear-gradient(135deg, #1d4ed8, #2563eb); color: white; }
+.btn-reset { background: #1e2d4a; color: #94a3b8; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🏙️ Red Cloacal San Pedro — Simulación de Riesgo Hídrico</h1>
+  <p>Modelo esquemático basado en datos técnicos del Informe de Vulnerabilidad 2026</p>
+</div>
+
+<div class="main">
+  <div class="controls">
+    <div class="control-group">
+      <label>Severidad El Niño <span class="val" id="v-nino">Normal</span></label>
+      <input type="range" id="nino" min="0" max="2" value="0" step="1">
+    </div>
+    <div class="control-group">
+      <label>Nivel Río Paraná <span class="val" id="v-rio">1.5m</span></label>
+      <input type="range" id="rio" min="10" max="60" value="15">
+    </div>
+    <div class="control-group">
+      <label>Conexiones Clandestinas <span class="val" id="v-clan">20%</span></label>
+      <input type="range" id="clan" min="0" max="100" value="20">
+    </div>
+    <div class="control-group">
+      <label>Sarro en Cañerías <span class="val" id="v-sarro">30%</span></label>
+      <input type="range" id="sarro" min="0" max="80" value="30">
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Carga del colector</div>
+      <div class="metric-val" id="m-carga">38%</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Presión red agua</div>
+      <div class="metric-val" id="m-presion">18.4 MCA</div>
+    </div>
+
+    <div id="status" class="badge ok">SISTEMA NORMAL</div>
+
+    <button class="btn btn-sim" onclick="toggleAnim()">▶ Simular Tormenta</button>
+    <button class="btn btn-reset" onclick="resetSim()">↺ Reiniciar</button>
+
+    <div class="legend">
+      <div style="font-size:11px;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Leyenda</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>Colector principal</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#60a5fa"></div>Colector secundario</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>Punto crítico</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Zona riesgo medio</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#06b6d4"></div>Flujo normal</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#7f1d1d"></div>Flujo en colapso</div>
+    </div>
+  </div>
+
+  <div class="canvas-area">
+    <canvas id="c"></canvas>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let animating = false;
+let animFrame = null;
+let t = 0;
+
+function resize() {
+  canvas.width = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+  draw();
+}
+window.addEventListener('resize', resize);
+resize();
+
+function getNino() { return parseInt(document.getElementById('nino').value); }
+function getRio() { return parseInt(document.getElementById('rio').value) / 10; }
+function getClan() { return parseInt(document.getElementById('clan').value) / 100; }
+function getSarro() { return parseInt(document.getElementById('sarro').value) / 100; }
+
+function calcular() {
+  const nino = getNino();
+  const rio = getRio();
+  const clan = getClan();
+  const sarro = getSarro();
+  const base = 287;
+  const lluvia = nino === 0 ? 10 : nino === 1 ? 150 : 400;
+  const caudal = base + clan * lluvia + nino * 80;
+  const capBase = 600;
+  const redRio = rio > 2.5 ? (rio - 2.5) * 80 : 0;
+  const cap = Math.max(150, capBase - redRio);
+  const carga = Math.min(150, (caudal / cap) * 100);
+  const presion = Math.max(0, 22 - sarro * 18 - nino * 1.2);
+  return { carga, presion, caudal, cap };
+}
+
+function updateUI() {
+  const nino = getNino();
+  const rio = getRio();
+  const clan = getClan();
+  const sarro = getSarro();
+  const ninoLabels = ['Normal', 'Moderado', 'Severo'];
+  document.getElementById('v-nino').textContent = ninoLabels[nino];
+  document.getElementById('v-rio').textContent = rio.toFixed(1) + 'm';
+  document.getElementById('v-clan').textContent = (clan * 100).toFixed(0) + '%';
+  document.getElementById('v-sarro').textContent = (sarro * 100).toFixed(0) + '%';
+
+  const { carga, presion } = calcular();
+  document.getElementById('m-carga').textContent = carga.toFixed(0) + '%';
+  document.getElementById('m-presion').textContent = presion.toFixed(1) + ' MCA';
+
+  const st = document.getElementById('status');
+  if (carga < 75 && presion > 7) {
+    st.textContent = '✅ SISTEMA NORMAL'; st.className = 'badge ok';
+  } else if (carga < 95 && presion > 3) {
+    st.textContent = '⚠️ ALERTA TEMPRANA'; st.className = 'badge warn';
+  } else {
+    st.textContent = '🚨 COLAPSO CRÍTICO'; st.className = 'badge crit';
+  }
+}
+
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  const { carga, presion } = calcular();
+  const nino = getNino();
+  const rio = getRio();
+
+  ctx.fillStyle = '#0b0f1a';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(30,45,74,0.4)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  // Río Paraná
+  const rioY = H * 0.85;
+  const rioNivel = Math.min(H * 0.15, rio * 8);
+  const rioColor = rio > 4 ? `rgba(220,38,38,${0.3 + (rio-4)*0.05})` : 'rgba(37,99,235,0.25)';
+  ctx.fillStyle = rioColor;
+  ctx.fillRect(0, H - rioNivel, W, rioNivel);
+  ctx.fillStyle = rio > 4 ? '#ef4444' : '#3b82f6';
+  ctx.font = 'bold 12px Segoe UI';
+  ctx.fillText(`Río Paraná — Cota: ${rio.toFixed(1)}m ${rio > 4 ? '⚠️ ALERTA' : ''}`, 16, H - rioNivel - 8);
+
+  // Zonas de riesgo
+  const zonas = [
+    { x: W*0.05, y: H*0.55, w: W*0.2, h: H*0.25, label: 'BAJO TALA\n(Zona Crítica)', color: 'rgba(127,29,29,0.3)', border: '#ef4444' },
+    { x: W*0.3, y: H*0.3, w: W*0.4, h: H*0.35, label: 'CASCO HISTÓRICO', color: 'rgba(30,58,138,0.2)', border: '#3b82f6' },
+    { x: W*0.72, y: H*0.4, w: W*0.22, h: H*0.3, label: 'LA TOSQUERA\n(Sin Red Cloacal)', color: 'rgba(120,53,15,0.3)', border: '#f59e0b' },
+  ];
+
+  zonas.forEach(z => {
+    ctx.fillStyle = z.color;
+    ctx.fillRect(z.x, z.y, z.w, z.h);
+    ctx.strokeStyle = z.border;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5,3]);
+    ctx.strokeRect(z.x, z.y, z.w, z.h);
+    ctx.setLineDash([]);
+    ctx.fillStyle = z.border;
+    ctx.font = 'bold 10px Segoe UI';
+    z.label.split('\n').forEach((line, i) => {
+      ctx.fillText(line, z.x + 6, z.y + 16 + i * 14);
+    });
+  });
+
+  // Red cloacal principal
+  const pipeColor = (pct) => {
+    if (pct < 60) return '#3b82f6';
+    if (pct < 85) return '#f59e0b';
+    return '#ef4444';
+  };
+
+  const pipes = [
+    // Colector troncal principal (Boulevard Moreno)
+    { x1: W*0.1, y1: H*0.47, x2: W*0.85, y2: H*0.47, w: 6, label: 'Colector Troncal — Blvd. Moreno', carga: carga },
+    // Ramal norte
+    { x1: W*0.3, y1: H*0.47, x2: W*0.3, y2: H*0.3, w: 4, label: '', carga: carga * 0.7 },
+    { x1: W*0.5, y1: H*0.47, x2: W*0.5, y2: H*0.3, w: 4, label: '', carga: carga * 0.65 },
+    { x1: W*0.7, y1: H*0.47, x2: W*0.7, y2: H*0.3, w: 4, label: '', carga: carga * 0.8 },
+    // Ramal sur (hacia río)
+    { x1: W*0.15, y1: H*0.47, x2: W*0.15, y2: H*0.72, w: 5, label: 'Descarga costera', carga: carga * 1.1 },
+    { x1: W*0.4, y1: H*0.47, x2: W*0.4, y2: H*0.72, w: 4, label: '', carga: carga * 0.9 },
+    // Colector Benefactoras
+    { x1: W*0.1, y1: H*0.6, x2: W*0.5, y2: H*0.6, w: 4, label: 'Benefactoras Sampedrinas', carga: carga * 0.85 },
+  ];
+
+  pipes.forEach(p => {
+    const c = Math.min(p.carga, 120);
+    ctx.strokeStyle = pipeColor(c);
+    ctx.lineWidth = p.w;
+    ctx.shadowColor = pipeColor(c);
+    ctx.shadowBlur = c > 85 ? 8 + Math.sin(t * 0.1) * 4 : 4;
+    ctx.beginPath();
+    ctx.moveTo(p.x1, p.y1);
+    ctx.lineTo(p.x2, p.y2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    if (p.label) {
+      ctx.fillStyle = pipeColor(c);
+      ctx.font = '10px Segoe UI';
+      ctx.fillText(p.label, (p.x1 + p.x2) / 2 - 40, p.y1 - 6);
+    }
+  });
+
+  // Partículas de flujo
+  const partCount = animating ? 30 : 10;
+  for (let i = 0; i < partCount; i++) {
+    const px = ((t * 2 + i * 37) % (W * 0.75)) + W * 0.1;
+    const py = H * 0.47;
+    const overflow = carga > 95;
+    ctx.fillStyle = overflow ? `rgba(239,68,68,${0.6 + Math.sin(t * 0.2 + i) * 0.3})` : `rgba(96,165,250,0.5)`;
+    ctx.beginPath();
+    ctx.arc(px, py + (overflow ? Math.sin(t * 0.15 + i) * 8 : 0), overflow ? 4 : 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Puntos críticos
+  const puntos = [
+    { x: W*0.15, y: H*0.47, label: 'Descarga\ncostera', critical: rio > 3.5 },
+    { x: W*0.38, y: H*0.55, label: 'Blvd. Moreno\n+ Benefactoras', critical: carga > 75 },
+    { x: W*0.05, y: H*0.6, label: 'Bajo Tala\n(Rebalse)', critical: carga > 85 },
+  ];
+
+  puntos.forEach(p => {
+    const pulse = Math.sin(t * 0.15) * 0.4 + 0.6;
+    ctx.fillStyle = p.critical ? `rgba(239,68,68,${pulse})` : 'rgba(245,158,11,0.7)';
+    ctx.shadowColor = p.critical ? '#ef4444' : '#f59e0b';
+    ctx.shadowBlur = p.critical ? 12 : 6;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.critical ? 8 : 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = p.critical ? '#fca5a5' : '#fcd34d';
+    ctx.font = 'bold 9px Segoe UI';
+    p.label.split('\n').forEach((line, i) => {
+      ctx.fillText(line, p.x + 12, p.y - 4 + i * 12);
+    });
+  });
+
+  // Lluvia animada
+  if (animating && nino > 0) {
+    const drops = nino === 1 ? 40 : 100;
+    ctx.strokeStyle = `rgba(147,197,253,${0.4 + nino * 0.1})`;
+    ctx.lineWidth = 1;
+    for (let i = 0; i < drops; i++) {
+      const rx = (Math.random() * W);
+      const ry = (t * 3 + i * 23) % H;
+      ctx.beginPath();
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(rx - 1, ry + 8);
+      ctx.stroke();
+    }
+  }
+
+  // Efecto tapón del río
+  if (rio > 4) {
+    ctx.fillStyle = `rgba(239,68,68,${0.15 + Math.sin(t * 0.1) * 0.05})`;
+    ctx.fillRect(0, H * 0.65, W * 0.3, H * 0.2);
+    ctx.fillStyle = '#fca5a5';
+    ctx.font = 'bold 11px Segoe UI';
+    ctx.fillText('⚠️ EFECTO TAPÓN — Descarga bloqueada', W * 0.02, H * 0.75);
+  }
+
+  // Barra de carga
+  const bx = W - 120, by = 20, bw = 100, bh = 14;
+  ctx.fillStyle = '#1e2d4a';
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.fillStyle = pipeColor(carga);
+  ctx.fillRect(bx, by, bw * Math.min(carga, 100) / 100, bh);
+  ctx.fillStyle = 'white';
+  ctx.font = 'bold 10px Segoe UI';
+  ctx.fillText(`Carga: ${carga.toFixed(0)}%`, bx, by - 4);
+
+  t++;
+}
+
+function animate() {
+  draw();
+  animFrame = requestAnimationFrame(animate);
+}
+
+function toggleAnim() {
+  animating = !animating;
+  const btn = document.querySelector('.btn-sim');
+  if (animating) {
+    btn.textContent = '⏸ Detener simulación';
+    animate();
+  } else {
+    btn.textContent = '▶ Simular Tormenta';
+    cancelAnimationFrame(animFrame);
+    draw();
+  }
+}
+
+function resetSim() {
+  document.getElementById('nino').value = 0;
+  document.getElementById('rio').value = 15;
+  document.getElementById('clan').value = 20;
+  document.getElementById('sarro').value = 30;
+  animating = false;
+  document.querySelector('.btn-sim').textContent = '▶ Simular Tormenta';
+  cancelAnimationFrame(animFrame);
+  updateUI();
+  draw();
+}
+
+document.querySelectorAll('input[type=range]').forEach(i => {
+  i.addEventListener('input', () => { updateUI(); if (!animating) draw(); });
+});
+
+updateUI();
+draw();
+</script>
+</body>
+</html>
