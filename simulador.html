@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador Hidráulico - San Pedro 2026</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #f4f6f9; color: #333; margin: 20px; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #1e3a8a; font-size: 24px; margin-bottom: 5px; }
+        .subtitle { color: #666; font-size: 14px; margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .panel { background: #fafafa; padding: 15px; border-radius: 6px; border: 1px solid #e5e7eb; }
+        h3 { margin-top: 0; color: #2563eb; font-size: 16px; border-bottom: 2px solid #e5e7eb; padding-bottom: 5px; }
+        .control-group { margin-bottom: 15px; }
+        label { display: block; font-size: 13px; font-weight: bold; margin-bottom: 5px; }
+        input[type="range"] { width: 100%; }
+        .value-display { float: right; font-weight: normal; color: #666; }
+        .metric { font-size: 20px; font-weight: bold; margin: 10px 0; }
+        .status-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; color: white; }
+        .status-ok { background: #10b981; }
+        .status-warn { background: #f59e0b; }
+        .status-crit { background: #ef4444; }
+        #canvas-container { display: flex; justify-content: center; align-items: center; background: #e0e7ff; border-radius: 6px; height: 200px; position: relative; overflow: hidden; }
+        .water-layer { position: absolute; bottom: 0; width: 100%; background: rgba(37, 99, 235, 0.6); transition: height 0.3s ease; }
+        .pipe-clog { position: absolute; top: 40%; left: 10%; right: 10%; height: 20px; background: #78350f; border-radius: 10px; opacity: 0.2; }
+        @media(max-width:600px){ .grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Simulador Hidráulico Estacional - San Pedro</h1>
+    <div class="subtitle">Modelo de vulnerabilidad de red y alertas IoT ante el fenómeno de El Niño 2026</div>
+    
+    <div class="grid">
+        <div class="panel">
+            <h3>Variables de Entrada (Escenario)</h3>
+            
+            <div class="control-group">
+                <label>Severidad de El Niño (Lluvias) <span class="value-display" id="val-el-nino">Normal</span></label>
+                <input type="range" id="input-el-nino" min="0" max="2" value="0" step="1">
+            </div>
+            
+            <div class="control-group">
+                <label>Conexiones Clandestinas Pluviales <span class="value-display" id="val-clandestinas">20%</span></label>
+                <input type="range" id="input-clandestinas" min="0" max="100" value="20">
+            </div>
+
+            <div class="control-group">
+                <label>Nivel del Río Paraná (Cota) <span class="value-display" id="val-rio">1.5 m</span></label>
+                <input type="range" id="input-rio" min="10" max="60" value="15" step="1">
+            </div>
+
+            <div class="control-group">
+                <label>Nivel de Sarro en Cañerías <span class="value-display" id="val-sarro">30%</span></label>
+                <input type="range" id="input-sarro" min="0" max="80" value="30">
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>Dashboard IoT - Alertas en Tiempo Real</h3>
+            <div class="control-group">
+                <label>Estado del Nodo IoT (Cloacas Costeras):</label>
+                <div id="iot-status" class="status-badge status-ok">SISTEMA NORMAL</div>
+            </div>
+            <div class="control-group">
+                <label>Caudal Total Recibido (Cloaca + Pluvial):</label>
+                <div class="metric" id="metric-caudal">320 L/s</div>
+            </div>
+            <div class="control-group">
+                <label>Presión de Agua Domiciliaria (Zonas Altas):</label>
+                <div class="metric" id="metric-presion">15.0 MCA</div>
+            </div>
+            <div id="canvas-container">
+                <div class="pipe-clog" id="visual-sarro"></div>
+                <div class="water-layer" id="visual-agua" style="height: 30%;"></div>
+                <span style="position:relative; z-index:10; font-weight:bold; color:#1e3a8a;" id="visual-text">Carga de Colectores: 30%</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const POBLACION = 69000;
+const CONSUMO_BASE_L_DIA = 450;
+const CAUDAL_CLOACAL_BASE = (POBLACION * CONSUMO_BASE_L_DIA * 0.8) / 86400;
+
+function simular() {
+    const elNino = parseInt(d3.select("#input-el-nino").property("value"));
+    const clandestinas = parseFloat(d3.select("#input-clandestinas").property("value")) / 100;
+    const rio = parseFloat(d3.select("#input-rio").property("value")) / 10;
+    const sarro = parseFloat(d3.select("#input-sarro").property("value")) / 100;
+
+    const ninoLabels = ["Normal / Neutro", "El Niño Moderado", "El Niño Severo"];
+    d3.select("#val-el-nino").text(ninoLabels[elNino]);
+    d3.select("#val-clandestinas").text((clandestinas * 100).toFixed(0) + "%");
+    d3.select("#val-rio").text(rio.toFixed(1) + " m");
+    d3.select("#val-sarro").text((sarro * 100).toFixed(0) + "%");
+
+    let factorLluvia = elNino === 0 ? 10 : elNino === 1 ? 150 : 400;
+    let caudalPluvialParasito = clandestinas * factorLluvia;
+    let infiltracionNapa = elNino * 80;
+    let caudalTotalSewer = CAUDAL_CLOACAL_BASE + caudalPluvialParasito + infiltracionNapa;
+
+    let capacidadSalidaBase = 600;
+    let reduccionPorRio = rio > 2.5 ? (rio - 2.5) * 80 : 0;
+    let capacidadEfectiva = Math.max(150, capacidadSalidaBase - reduccionPorRio);
+
+    let porcentajeLlenado = (caudalTotalSewer / capacidadEfectiva) * 100;
+
+    let consumoPuntaModificador = 1 + (elNino * 0.15);
+    let presionBase = 22;
+    let perdidaPorSarro = sarro * 18;
+    let perdidaPorDemanda = (consumoPuntaModificador - 1) * 8;
+    let presionFinal = Math.max(0, presionBase - perdidaPorSarro - perdidaPorDemanda);
+
+    let estadoBadge = d3.select("#iot-status");
+    if (porcentajeLlenado < 75 && presionFinal > 7) {
+        estadoBadge.text("SISTEMA NORMAL").attr("class", "status-badge status-ok");
+    } else if (porcentajeLlenado < 95 && presionFinal > 3) {
+        estadoBadge.text("ALERTA TEMPRANA - RIESGO DE REBALSE").attr("class", "status-badge status-warn");
+    } else {
+        let desc = porcentajeLlenado >= 95 ? "CRÍTICO: COLAPSO Y REBALSE EN BAJO TALA" : "CRÍTICO: PRESIÓN CERO EN CASCO URBANO";
+        estadoBadge.text(desc).attr("class", "status-badge status-crit");
+    }
+
+    d3.select("#metric-caudal").text(caudalTotalSewer.toFixed(1) + " L/s");
+    d3.select("#metric-presion").text(presionFinal.toFixed(1) + " MCA");
+    d3.select("#visual-agua").style("height", Math.min(100, porcentajeLlenado) + "%");
+    d3.select("#visual-text").text("Carga de Colectores: " + porcentajeLlenado.toFixed(0) + "%");
+    d3.select("#visual-sarro").style("opacity", sarro);
+}
+
+d3.selectAll("input[type='range']").on("input", simular);
+simular();
+</script>
+</body>
+</html>
